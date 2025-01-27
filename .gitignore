@@ -2,3 +2,5 @@ data/
 .dap
 pretrained_models/
 .ipynb_checkpoints/
+logs/
+snapshot/

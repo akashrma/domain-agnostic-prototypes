@@ -10,7 +10,7 @@ def cross_entropy_2d(pred, label, args):
     label: B*H*W
     '''
 
-    assert not label.required_grad
+    assert not label.requires_grad
     assert pred.dim() == 4
     assert label.dim() == 3
     assert pred.size(0) == label.size(0), f'{pred.size(0)}vs{label.size(0)}'
@@ -19,7 +19,7 @@ def cross_entropy_2d(pred, label, args):
 
     B, C, H, W = pred.size()
     label = label.view(-1)
-    class_count = torch.bincount(label).float()
+    class_count = torch.bincount(label, minlength=C).float()
     try:
         assert class_count.size(0) == 5
         new_class_count = class_count
@@ -28,7 +28,8 @@ def cross_entropy_2d(pred, label, args):
         new_class_count[:class_count_size(0)] = class_count
 
     weight = (1 - (new_class_count + 1) / label.size(0))
-    pred = pred.transpose(1,2).transpose(2,3).contiguous() # B*C*H*W -> B*H*C*W -> B*H*W*C
+    # pred = pred.transpose(1,2).transpose(2,3).contiguous() # B*C*H*W -> B*H*C*W -> B*H*W*C
+    pred = pred.permute(0, 2, 3, 1).contiguous().view(-1, C)
     loss = F.cross_entropy(input=pred, target=label, weight=weight)
     return loss
 
