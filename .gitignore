@@ -4,3 +4,4 @@ pretrained_models/
 .ipynb_checkpoints/
 logs/
 snapshot/
+save_results/
