@@ -13,8 +13,8 @@ from tensorboardX import SummaryWriter
 from torch import nn
 from tqdm import tqdm
 from torchvision.utils import make_grid
-from utils import dice_eval, adjust_learning_rate, loss_calc
-from loss import dice_loss
+from utils import dice_eval, adjust_learning_rate, loss_calc, generate_etf_class_prototypes
+from loss import dice_loss, fixed_etf_loss
 from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
 from eval import eval_supervised
@@ -122,6 +122,15 @@ def print_losses(current_losses, i_iter):
     full_string = ' '.join(list_strings)
     tqdm.write(f'iter={i_iter} {full_string}')
 
+def labels_downsample(labels, feature_H, feature_W):
+    '''
+    labels: B*H*W
+    '''
+    labels = labels.float().cuda()
+    labels = F.interpolate(labels, size=[feature_H, feature_W], mode='nearest')
+    labels = labels.int()
+    return labels
+
 def train_supervised(model, train_loader, val_loader, args):
     '''
     Supervised training for a single domain.
@@ -143,8 +152,6 @@ def train_supervised(model, train_loader, val_loader, args):
                              momentum=args.momentum,
                              weight_decay=args.weight_decay)
     
-    # interpolate output segmaps
-    interp = nn.Upsample(size=(input_size[1], input_size[0]), mode='bilinear', align_corners=True)
 
     train_loader_iter = enumerate(train_loader)
     val_loader_iter = enumerate(val_loader)
@@ -197,6 +204,140 @@ def train_supervised(model, train_loader, val_loader, args):
                           'loss_seg_main': loss_seg_main,
                           'loss_dice_aux': loss_dice_aux,
                           'loss_dice_main': loss_dice_main, 
+        }
+
+        # Validation
+        if i_iter % 10 == 0 and i_iter != 0:
+            print_losses(current_losses, i_iter)
+
+            try:
+                _, batch = val_loader_iter.__next__()
+            except StopIteration:
+                val_loader_iter = enumerate(val_loader)
+                _, batch = val_loader_iter.__next__()
+            images_val, labels_val, _ = batch
+
+            iter_eval_supervised(model, images_val, labels, labels_val, args)
+
+        if i_iter % 100 == 0 and i_iter != 0:
+            
+            test_list_pth = args.testfile_path
+
+            with open(test_list_pth) as fp:
+                rows = fp.readlines()
+            testfile_list = [row[:-1] for row in rows]
+
+            dice_mean, dice_std, assd_mean, assd_std = eval_supervised(testfile_list, model, args.test_target)
+            is_best = np.mean(dice_mean) > best_mean_dice
+            best_mean_dice = max(np.mean(dice_mean),best_mean_dice)
+            if is_best:
+                print('Dice:')
+                print('AA :%.1f(%.1f)' % (dice_mean[3], dice_std[3]))
+                print('LAC:%.1f(%.1f)' % (dice_mean[1], dice_std[1]))
+                print('LVC:%.1f(%.1f)' % (dice_mean[2], dice_std[2]))
+                print('Myo:%.1f(%.1f)' % (dice_mean[0], dice_std[0]))
+                print('Mean:%.1f' % np.mean(dice_mean))
+                print('ASSD:')
+                print('AA :%.1f(%.1f)' % (assd_mean[3], assd_std[3]))
+                print('LAC:%.1f(%.1f)' % (assd_mean[1], assd_std[1]))
+                print('LVC:%.1f(%.1f)' % (assd_mean[2], assd_std[2]))
+                print('Myo:%.1f(%.1f)' % (assd_mean[0], assd_std[0]))
+                print('Mean:%.1f' % np.mean(assd_mean))
+                print('taking snapshot ...')
+                print('exp =', args.snapshot_dir)
+                snapshot_dir = Path(args.snapshot_dir)
+                torch.save(model.state_dict(), snapshot_dir / f'model_{i_iter}.pth')
+
+            model.train()
+
+        # Visualize with tensorboard
+        if viz_tensorboard:
+            log_losses_tensorboard(writer, current_losses, i_iter)
+
+def train_supervised_etf(model, train_loader, val_loader, args):
+    '''
+    Supervised training for a single domain with neural collapse/ETF fixed prototypes.
+    '''
+    input_size = args.input_size_source
+    viz_tensorboard = os.path.exists(args.tensorboard_log_dir)
+    writer = SummaryWriter(log_dir=args.tensorboard_log_dir)
+    
+    model.train()
+    model.cuda()
+    cudnn.benchmark = True
+    cudnn.enabled = True
+
+    if args.optimizer == 'Adam':
+        optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
+    else:
+        optimizer = optim.SGD(model.optim_parameters(args.learning_rate),
+                             lr=args.learning_rate,
+                             momentum=args.momentum,
+                             weight_decay=args.weight_decay)
+    
+    # interpolate output segmaps
+    interp = nn.Upsample(size=(input_size[1], input_size[0]), mode='bilinear', align_corners=True)
+
+    train_loader_iter = enumerate(train_loader)
+    val_loader_iter = enumerate(val_loader)
+
+    transforms = None
+    img_mean = np.array((104.00698793, 116.66876762, 122.67891434), dtype=np.float32)
+    class_prototypes = None
+    best_mean_dice = 0
+    
+    for i_iter in tqdm(range(args.max_iters + 1)):
+        
+        model.train()
+        optimizer.zero_grad()
+
+        adjust_learning_rate(optimizer, i_iter, args)
+
+        try:
+            _, batch = train_loader_iter.__next__()
+        except StopIteration:
+            train_loader_iter = enumerate(train_loader)
+            _, batch = train_loader_iter.__next__()
+        images, labels, _ = batch
+
+        features, pred_aux, pred_main = model(images.cuda())
+        
+        if args.multi_level_train:
+            pred_aux = interp(pred_aux)
+            loss_seg_aux = loss_calc(pred_aux, labels, args)
+            loss_dice_aux = dice_loss(pred_aux, labels)
+        else:
+            loss_seg_aux = 0
+            loss_dice_aux = 0
+        
+        pred_main = interp(pred_main)
+        loss_seg_main = loss_calc(pred_main, labels, args)
+        loss_dice_main = dice_loss(pred_main, labels)
+        loss_seg_all = (args.lambda_seg_main * loss_seg_main
+                        + args.lambda_seg_aux * loss_seg_aux
+                        + args.lambda_dice_main * loss_dice_main
+                        + args.lambda_dice_aux * loss_dice_aux
+        )
+
+        _, feature_dim, feature_H, feature_W = features.size()
+        
+        downsampled_labels = labels_downsample(labels.unsqueeze(1), feature_H, feature_W) # B*feature_H*feature_W
+        if class_prototypes is None:
+            class_prototypes = generate_etf_class_prototypes(feature_dim, args.num_classes)
+        
+        loss_etf = fixed_etf_loss(features, downsampled_labels, class_prototypes, args)
+        loss_total = loss_seg_all + loss_etf
+        loss_total.backward()
+
+        optimizer.step()
+
+        torch.cuda.empty_cache()
+
+        current_losses = {'loss_seg_aux': loss_seg_aux,
+                          'loss_seg_main': loss_seg_main,
+                          'loss_dice_aux': loss_dice_aux,
+                          'loss_dice_main': loss_dice_main,
+                          'loss_etf': loss_etf,
         }
 
         # Validation

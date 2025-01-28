@@ -9,7 +9,7 @@ import numpy as np
 import os.path as osp
 from torch.utils import data
 
-from train import train_supervised
+from train import train_supervised, train_supervised_etf
 from data_reader import CTDataset, MRDataset, CTDataset_aug, MRDataset_aug
 from model.deeplabv2 import get_deeplab_v2
 
@@ -19,7 +19,7 @@ parser.add_argument("--training_mode", choices=['supervised', 'supervised_etf', 
 parser.add_argument("--train_domain", choices=['MR', 'CT'], type=str)
 parser.add_argument("--tensorboard_log_dir", default='logs', type=str, help="Tensorboard log directory.")
 parser.add_argument("--viz_rate", default=10, type=int, help="visualization rate for tensorboard")
-parser.add_argument("--random_seed", default=42, type=int, help="random seed init for the experiment")
+parser.add_argument("--random_seed", default=1, type=int, help="random seed init for the experiment")
 parser.add_argument("--backbone_model", default="DeepLabv2", type=str, help="Backbone model for segmentation.")
 parser.add_argument("--num_classes", default=4, type=int, help="Number of pixel classes.")
 parser.add_argument("--multi_level_train", default=False, type=bool, help="For DeepLabv2, if you want to enable multi-level training.")
@@ -30,11 +30,11 @@ parser.add_argument("--train_gt_dir", default=None, type=str, help="list of trai
 parser.add_argument("--val_gt_dir", default=None, type=str, help="list of validation ground truth as a  .txt file")
 parser.add_argument("--num_workers", default=4, type=int, help="Number of worker for dataloader.")
 parser.add_argument("--optimizer", default='SGD', type=str, help="Optimizer for training.")
-parser.add_argument("--learning-rate", default=1.0e-3, type=float, help='Optimizer learning rate.')
+parser.add_argument("--learning-rate", default=2.0e-3, type=float, help='Optimizer learning rate.')
 parser.add_argument("--momentum", default=0.9, type=float, help="Optimizer momentum.")
 parser.add_argument("--weight_decay", default=1e-4, type=float, help="Weight decay in SGD.")
 parser.add_argument("--input_size_source", nargs='+', type=int)
-parser.add_argument("--max_iters", default=1600, type=int, help="Maximum number of iterations for training.")
+parser.add_argument("--max_iters", default=2800, type=int, help="Maximum number of iterations for training.")
 parser.add_argument("--lr_poly_power", default=2, type=int, help="Exponential power to adjust poly learning rate.")
 parser.add_argument("--test_target", default='MR', type=str, help="Choose between 'MR' or 'CT'.")
 parser.add_argument("--snapshot_dir", default='snapshot', type=str, help="Directory to store model snapshot.")
@@ -43,6 +43,7 @@ parser.add_argument("--lambda_seg_main", default=1.0, type=float)
 parser.add_argument("--lambda_seg_aux", default=0.1, type=float)
 parser.add_argument("--lambda_dice_main", default=1.0, type=float)
 parser.add_argument("--lambda_dice_aux", default=0.1, type=float)
+parser.add_argument("--ceco_loss_weight", default=0.4, type=float)
 args = parser.parse_args()
 
 def main():
@@ -129,7 +130,7 @@ def main():
                                     pin_memory=True,
                                     worker_init_fn=_init_fn)
         print('Dataloading finished.')
-        train_supervised_etf(model, train_loader, val_loader)
+        train_supervised_etf(model, train_loader, val_loader, args)
     elif args.training_mode == 'uda_dap':
         # NOT IMPLEMENTED YET
         if args.train_domain == 'MR':

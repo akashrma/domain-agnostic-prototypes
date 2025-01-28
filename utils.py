@@ -55,4 +55,21 @@ def dice_eval(pred, label, n_class):
         dice_arr.append((2*inse/(union+eps)).cpu().data.numpy())
 
     return dice, dice_arr, np.hstack(each_class_number)
-    
+
+def generate_random_orthogonal_matrix(feature_dim, num_classes):
+    a = np.random.random(size=(feature_dim, num_classes))
+    P, _ = np.linalg.qr(a)
+    P = torch.tensor(P).float()
+    assert torch.allclose(torch.matmul(P.T, P), torch.eye(num_classes), atol=1e-07), torch.max(torch.abs(torch.matmul(P.T, P) - torch.eye(num_classes)))
+    return P
+
+def generate_etf_class_prototypes(feature_dim, num_classes):
+    print(f"Generating ETF class prototypes for K={num_classes} and d={feature_dim}.")
+    d = feature_dim
+    K = num_classes
+    P = generate_random_orthogonal_matrix(feature_dim=d, num_classes=K)
+    I = torch.eye(K)
+    one = torch.ones(K, K)
+    M_star = np.sqrt(K / (K-1)) * torch.matmul(P, I-((1/K) * one))
+    M_star = M_star.cuda()
+    return M_star

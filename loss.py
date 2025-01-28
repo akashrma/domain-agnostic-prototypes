@@ -3,6 +3,10 @@ import torch
 import torch.nn.functional as F
 import torch.nn as nn
 import math
+import logging
+
+logging.basicConfig(level=logging.INFO, format="$(asctime)s - %(message)s")
+logger = logging.getLogger(__name__)
 
 def cross_entropy_2d(pred, label, args):
     '''
@@ -70,4 +74,52 @@ def dice_loss(pred, target):
     dice_total =  torch.sum(dice) / dice.size(0)  # divide by B -> Batch Size
     return 1 - 1.0 * dice_total/5.0
 
-    
+def fixed_etf_loss(features, downsampled_labels, class_prototypes, args):
+
+    B, feature_dim, H, W = features.shape
+    assert feature_dim == 2048, "Model output's feature dimension should be 2048."
+
+    num_classes = args.num_classes
+    features_flat = features.permute(0, 2, 3, 1).reshape(-1, feature_dim) # Shape: [B*H*W, num_classes]
+    labels_flat = downsampled_labels.view(-1) # Shape: [B*H*W]
+
+    class_feature_sums = torch.zeros(num_classes, feature_dim, device=features.device) # Shape: [num_classes, 2048]
+    class_pixel_counts = torch.zeros(num_classes, device=features.device) # Shape: [num_classes]
+
+    # Compute feature sums and pixel counts
+    for cls in range(num_classes):
+        mask = (labels_flat == cls)
+        if mask.sum() == 0:
+            logger.info(f"No pixels founds for class {cls}, skipping.")
+            continue
+
+        class_feature_sums[cls] = features_flat[mask].sum(dim=0)
+        class_pixel_counts[cls] = mask.sum()
+        logger.info(f"Class {cls}: Pixel count: {class_pixel_counts[cls].item()}")
+
+    class_feature_centers = class_feature_sums / (class_pixel_counts.view(-1, 1) + 1e-6)
+    logger.info(f"Class feature centers: {class_feature_centers}")
+
+    loss_feat_center = 0.0
+    class_prototypes = class_prototypes.view(num_classes, feature_dim)
+
+    for cls in range(num_classes):
+        if class_pixel_counts[cls] == 0:
+            continue
+
+        sel_class_feature_center = class_feature_centers[cls]
+        sel_class_prototype = class_prototypes[cls]
+
+        dot_prods = torch.einsum('d,kd->k', sel_class_feature_center, class_prototypes)
+        max_dot_prod = dot_prods.max()
+        exp_dot_prods = torch.exp(dot_prods - max_dot_prod) 
+        numr = torch.exp(torch.dot(sel_class_feature_center, sel_class_prototype) - max_dot_prod)
+        denr = exp_dot_prods.sum()
+
+        softmax = numr / denr
+        loss_feat_center += -torch.log(softmax.clamp(min=1e-12)) # Clamp to avoid log(0)
+        logger.info(f"Class {cls}: Fixed ETF Loss contribution: {-torch.log(softmax.clamp(min=1e-12)).item()}")
+
+    logger.info(f"Total Fixed ETF Loss: {loss_feat_center.item()}")
+
+    return (args.ceco_loss_weight * loss_feat_center)
