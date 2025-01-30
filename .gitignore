@@ -5,3 +5,5 @@ pretrained_models/
 logs/
 snapshot/
 save_results/
+__pycache__/
+model/__pycache__/

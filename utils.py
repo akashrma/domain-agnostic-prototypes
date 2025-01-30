@@ -6,23 +6,33 @@ import torch.nn.functional as F
 import torch.sparse as sparse
 from skimage.exposure import match_histograms
 
+def log_gradient_norms(model, writer, i_iter):
+    total_norm = 0.0
+    for name, param in model.named_parameters():
+        if param.grad is not None:
+            param_norm = param.grad_norm(2)
+            total_norm += param_norm.item() ** 2
+            writer.add_scalar(f'gradients/{name}', param_norm.item(), i_iter)
+
+    total_norm = total_norm ** 0.5
+    writer.add_scalar('gradients/total_norm', total_norm, i_iter)
+
 def lr_poly(base_lr, curr_iter, max_iter, power):
     '''
     Poly LR Scheduler
     '''
     return base_lr * ((1 - float(curr_iter) / max_iter) ** power)
 
-def _adjust_learning_rate(optimizer, i_iter, args, learning_rate):
-    lr = lr_poly(learning_rate, i_iter, args.max_iters, args.lr_poly_power)
-    optimizer.param_groups[0]['lr'] = lr
-    if len(optimizer.param_groups) > 1:
-        optimizer.param_groups[1]['lr'] = lr * 10
-
-def adjust_learning_rate(optimizer, i_iter, args):
+def adjust_learning_rate(optimizer, i_iter, writer, args):
     '''
     adjust learning rate for main segnet
     '''
-    _adjust_learning_rate(optimizer, i_iter, args, args.learning_rate)
+    lr = lr_poly(args.learning_rate, i_iter, args.max_iters, args.lr_poly_power)
+    optimizer.param_groups[0]['lr'] = lr
+    writer.add_scalar('learning_rate_main', optimizer.param_groups[0]['lr'], i_iter)
+    if len(optimizer.param_groups) > 1:
+        optimizer.param_groups[1]['lr'] = lr * 10
+        writer.add_scalar('learning_rate_classifier', optimizer.param_groups[1]['lr'], i_iter)
 
 def loss_calc(pred, label, args):
     '''

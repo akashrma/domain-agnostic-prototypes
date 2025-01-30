@@ -122,4 +122,4 @@ def fixed_etf_loss(features, downsampled_labels, class_prototypes, args):
 
     logger.info(f"Total Fixed ETF Loss: {loss_feat_center.item()}")
 
-    return (args.ceco_loss_weight * loss_feat_center)
+    return (args.etf_loss_weight * loss_feat_center)

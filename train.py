@@ -268,7 +268,15 @@ def train_supervised_etf(model, train_loader, val_loader, args):
     cudnn.enabled = True
 
     if args.optimizer == 'Adam':
-        optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
+        optimizer = optim.Adam(model.optim_parameters(args.learning_rate),
+                               lr=args.learning_rate,
+                               betas=(0.9, 0.999),
+                               weight_decay=args.weight_decay)
+    elif args.optimizer == 'AdamW':
+        optimizer = optim.AdamW(model.optim_parameters(args.learning_rate),
+                               lr=args.learning_rate,
+                               betas=(0.9, 0.999),
+                               weight_decay=args.weight_decay)
     else:
         optimizer = optim.SGD(model.optim_parameters(args.learning_rate),
                              lr=args.learning_rate,
@@ -291,7 +299,7 @@ def train_supervised_etf(model, train_loader, val_loader, args):
         model.train()
         optimizer.zero_grad()
 
-        adjust_learning_rate(optimizer, i_iter, args)
+        adjust_learning_rate(optimizer, i_iter, writer, args)
 
         try:
             _, batch = train_loader_iter.__next__()
@@ -387,3 +395,5 @@ def train_supervised_etf(model, train_loader, val_loader, args):
         # Visualize with tensorboard
         if viz_tensorboard:
             log_losses_tensorboard(writer, current_losses, i_iter)
+
+def train_uda_dap()
