@@ -80,6 +80,7 @@ def fixed_etf_loss(features, downsampled_labels, class_prototypes, args):
     assert feature_dim == 2048, "Model output's feature dimension should be 2048."
 
     num_classes = args.num_classes
+    features = F.normalize(features, p=2, dim=1) # normalize the features (class prototypes are already normalized).
     features_flat = features.permute(0, 2, 3, 1).reshape(-1, feature_dim) # Shape: [B*H*W, num_classes]
     labels_flat = downsampled_labels.view(-1) # Shape: [B*H*W]
 

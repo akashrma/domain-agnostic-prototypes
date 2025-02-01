@@ -28,9 +28,9 @@ parser.add_argument("--source_train_dir", default=None, type=str, help="list of 
 parser.add_argument("--source_val_dir", default=None, type=str, help="list of source validation samples as a .txt file")
 parser.add_argument("--source_train_gt_dir", default=None, type=str, help="list of source training ground truth as a  .txt file")
 parser.add_argument("--source_val_gt_dir", default=None, type=str, help="list of source validation ground truth as a  .txt file")
-parser.add_argument("target_train_dir", default=None, type=str, help="list of target training samples as a .txt file")
-parser.add_argument("target_val_dir", default=None, type=str, help="list of target validation samples as a .txt file")
-parser.add_argument("target_val_gt_dir", default=None, type=str, help="list of target validation ground truth as a .txt file")
+parser.add_argument("--target_train_dir", default=None, type=str, help="list of target training samples as a .txt file")
+parser.add_argument("--target_val_dir", default=None, type=str, help="list of target validation samples as a .txt file")
+parser.add_argument("--target_val_gt_dir", default=None, type=str, help="list of target validation ground truth as a .txt file")
 parser.add_argument("--num_workers", default=4, type=int, help="Number of worker for dataloader.")
 parser.add_argument("--optimizer", default='SGD', type=str, help="Optimizer for training.")
 parser.add_argument("--learning-rate", default=2.0e-3, type=float, help='Optimizer learning rate.')
@@ -47,6 +47,7 @@ parser.add_argument("--lambda_seg_aux", default=0.1, type=float)
 parser.add_argument("--lambda_dice_main", default=1.0, type=float)
 parser.add_argument("--lambda_dice_aux", default=0.1, type=float)
 parser.add_argument("--etf_loss_weight", default=0.4, type=float)
+parser.add_argument("--pl_mode", choices=["thresholding", "thresh_feat_consistency", "pixel_self_labeling_OT"], type=str)
 args = parser.parse_args()
 
 def main():
@@ -82,6 +83,7 @@ def main():
 
     transforms = None
     img_mean = np.array((104.00698793, 116.66876762, 122.67891434), dtype=np.float32)
+    model = torch.compile(model)
 
     if args.training_mode == 'supervised':
         
@@ -111,6 +113,7 @@ def main():
                                     pin_memory=True,
                                     worker_init_fn=_init_fn)
         print('Dataloading finished.')
+        print(f'Supervised training for {args.train_domain}.')
         train_supervised(model, train_loader, val_loader, args)
     elif args.training_mode == 'supervised_etf':
         
@@ -140,7 +143,9 @@ def main():
                                     pin_memory=True,
                                     worker_init_fn=_init_fn)
         print('Dataloading finished.')
+        print(f'Supervised ETF training for {args.train_domain}.')
         train_supervised_etf(model, train_loader, val_loader, args)
+        
     elif args.training_mode == 'uda_dap':
         
         source_train_data = args.source_train_dir
@@ -156,9 +161,44 @@ def main():
                                      img_mean=img_mean, transform=transforms)
             source_val_dataset = MRDataset(data_pth=source_val_data, gt_pth=source_val_gt_data,
                                    img_mean=img_mean, transform=transforms)
-            target_train_dataset = CTDataset_aug()
+            target_train_dataset = CTDataset_aug(data_pth=target_train_data,
+                                                img_mean=img_mean, transform=transforms,
+                                                aug_transform=True)
+            target_val_dataset = CTDataset(data_pth=target_val_data, gt_pth=target_val_gt_data,
+                                          img_mean=img_mean, transform=transforms)
+        elif args.train_domain == 'CT':
+            source_train_dataset = CTDataset(data_pth=source_train_data, gt_pth=source_train_gt_data,
+                                     img_mean=img_mean, transform=transforms)
+            source_val_dataset = CTDataset(data_pth=source_val_data, gt_pth=source_val_gt_data,
+                                   img_mean=img_mean, transform=transforms)
+            target_train_dataset = MRDataset_aug(data_pth=target_train_data,
+                                                img_mean=img_mean, transform=transforms,
+                                                aug_transform=True)
+            target_val_dataset = MRDataset(data_pth=target_val_data, gt_pth=target_val_gt_data,
+                                          img_mean=img_mean, transform=transforms)
+        source_train_loader = data.DataLoader(source_train_dataset,
+                                      batch_size=args.num_workers,
+                                      shuffle=True,
+                                      pin_memory=True,
+                                      worker_init_fn=_init_fn)
+        source_val_loader = data.DataLoader(source_val_dataset,
+                                      batch_size=args.num_workers,
+                                      shuffle=True,
+                                      pin_memory=True,
+                                      worker_init_fn=_init_fn)
+        target_train_loader = data.DataLoader(target_train_dataset,
+                                      batch_size=args.num_workers,
+                                      shuffle=True,
+                                      pin_memory=True,
+                                      worker_init_fn=_init_fn)
+        target_val_loader = data.DataLoader(target_val_dataset,
+                                      batch_size=args.num_workers,
+                                      shuffle=True,
+                                      pin_memory=True,
+                                      worker_init_fn=_init_fn)
         print('Dataloading finished.')
-        train_uda_dap(model, source_train_loader, source_val_loader, target_train_loader)
+        print(f'Domain Agnostic Prototype Training for {args.train_domain}.')
+        train_uda_dap(model, source_train_loader, source_val_loader, target_train_loader, target_val_loader)
 
 if __name__ == '__main__':
     main()
