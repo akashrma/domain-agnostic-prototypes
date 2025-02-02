@@ -219,8 +219,8 @@ def train_supervised(model, train_loader, val_loader, args):
         if i_iter % 100 == 0 and i_iter != 0:
             print_losses(current_losses, i_iter)
 
-            dice_mean, _, _, _ = eval_validation(val_loader, model, "cuda", best_mean_dice, i_iter, args, writer)
-            best_mean_dice = max(np.mean(dice_mean), best_mean_dice)            
+            # dice_mean, _, _, _ = eval_validation(val_loader, model, "cuda", best_mean_dice, i_iter, args, writer)
+            # best_mean_dice = max(np.mean(dice_mean), best_mean_dice)            
             # try:
             #     _, batch = val_loader_iter.__next__()
             # except StopIteration:
@@ -230,36 +230,36 @@ def train_supervised(model, train_loader, val_loader, args):
 
             # iter_eval_supervised(model, images_val, labels, labels_val, args)
 
-        # if i_iter % 100 == 0 and i_iter != 0:
+        if i_iter % 100 == 0 and i_iter != 0:
             
-        #     test_list_pth = args.testfile_path
+            test_list_pth = args.testfile_path
 
-        #     with open(test_list_pth) as fp:
-        #         rows = fp.readlines()
-        #     testfile_list = [row[:-1] for row in rows]
+            with open(test_list_pth) as fp:
+                rows = fp.readlines()
+            testfile_list = [row[:-1] for row in rows]
 
-        #     dice_mean, dice_std, assd_mean, assd_std = eval_supervised(testfile_list, model, args.test_target)
-        #     is_best = np.mean(dice_mean) > best_mean_dice
-        #     best_mean_dice = max(np.mean(dice_mean),best_mean_dice)
-        #     if is_best:
-        #         print('Dice:')
-        #         print('AA :%.1f(%.1f)' % (dice_mean[3], dice_std[3]))
-        #         print('LAC:%.1f(%.1f)' % (dice_mean[1], dice_std[1]))
-        #         print('LVC:%.1f(%.1f)' % (dice_mean[2], dice_std[2]))
-        #         print('Myo:%.1f(%.1f)' % (dice_mean[0], dice_std[0]))
-        #         print('Mean:%.1f' % np.mean(dice_mean))
-        #         print('ASSD:')
-        #         print('AA :%.1f(%.1f)' % (assd_mean[3], assd_std[3]))
-        #         print('LAC:%.1f(%.1f)' % (assd_mean[1], assd_std[1]))
-        #         print('LVC:%.1f(%.1f)' % (assd_mean[2], assd_std[2]))
-        #         print('Myo:%.1f(%.1f)' % (assd_mean[0], assd_std[0]))
-        #         print('Mean:%.1f' % np.mean(assd_mean))
-        #         print('taking snapshot ...')
-        #         print('exp =', args.snapshot_dir)
-        #         snapshot_dir = Path(args.snapshot_dir)
-        #         torch.save(model.state_dict(), snapshot_dir / f'model_{i_iter}.pth')
+            dice_mean, dice_std, assd_mean, assd_std = eval_supervised(testfile_list, model, args.test_target)
+            is_best = np.mean(dice_mean) > best_mean_dice
+            best_mean_dice = max(np.mean(dice_mean),best_mean_dice)
+            if is_best:
+                print('Dice:')
+                print('AA :%.1f(%.1f)' % (dice_mean[3], dice_std[3]))
+                print('LAC:%.1f(%.1f)' % (dice_mean[1], dice_std[1]))
+                print('LVC:%.1f(%.1f)' % (dice_mean[2], dice_std[2]))
+                print('Myo:%.1f(%.1f)' % (dice_mean[0], dice_std[0]))
+                print('Mean:%.1f' % np.mean(dice_mean))
+                print('ASSD:')
+                print('AA :%.1f(%.1f)' % (assd_mean[3], assd_std[3]))
+                print('LAC:%.1f(%.1f)' % (assd_mean[1], assd_std[1]))
+                print('LVC:%.1f(%.1f)' % (assd_mean[2], assd_std[2]))
+                print('Myo:%.1f(%.1f)' % (assd_mean[0], assd_std[0]))
+                print('Mean:%.1f' % np.mean(assd_mean))
+                print('taking snapshot ...')
+                print('exp =', args.snapshot_dir)
+                snapshot_dir = Path(args.snapshot_dir)
+                torch.save(model.state_dict(), snapshot_dir / f'model_{i_iter}.pth')
 
-        #     model.train()
+            model.train()
 
         # Visualize with tensorboard
         if viz_tensorboard:
@@ -363,14 +363,14 @@ def train_supervised_etf(model, train_loader, val_loader, args):
         if i_iter % 10 == 0 and i_iter != 0:
             print_losses(current_losses, i_iter)
 
-            try:
-                _, batch = val_loader_iter.__next__()
-            except StopIteration:
-                val_loader_iter = enumerate(val_loader)
-                _, batch = val_loader_iter.__next__()
-            images_val, labels_val, _ = batch
+            # try:
+            #     _, batch = val_loader_iter.__next__()
+            # except StopIteration:
+            #     val_loader_iter = enumerate(val_loader)
+            #     _, batch = val_loader_iter.__next__()
+            # images_val, labels_val, _ = batch
 
-            iter_eval_supervised(model, images_val, labels, labels_val, args)
+            # iter_eval_supervised(model, images_val, labels, labels_val, args)
 
         if i_iter % 100 == 0 and i_iter != 0:
             
@@ -496,18 +496,89 @@ def train_uda_dap(model, source_train_loader, source_val_loader, target_train_lo
             if class_prototypes is None:
                 class_prototypes = generate_etf_class_prototypes(feature_dim, args.num_classes)
 
-            source_loss_etf = fixed_etf_loss(features, source_downsampled_labels, class_prototypes, args)
+            print('Calculating source ETF loss...')
+            print("*"*100)
+            source_loss_etf = fixed_etf_loss(features, source_downsampled_labels, class_prototypes, None, args)
 
             target_feature_list = []
             target_features, _, _ = model(target_images.cuda())
-            target_feature_list.append(target_aug_features)
+            target_feature_list.append(interp_up(target_aug_features))
 
             for image_aug in target_images_aug_list:
                 target_aug_features, _ , _ = model(image_aug.cuda())
-                target_feature_list.append(target_aug_features)
+                target_feature_list.append(interp_up(target_aug_features))
 
+            print('Calculating target ETF loss...')
+            print("*"*100)
+            target_loss_etf = 0
             for target_feature in target_feature_list:
                 hard_pixel_label, pixel_mask = generate_pseudo_label(target_feature, class_prototypes, args)
-                
-                
+                target_loss_etf += fixed_etf_loss(target_feature, hard_pixel_label, class_prototypes, pixel_mask, args)
+
+            loss_etf_all = source_loss_etf + (args.target_etf_loss_weight * target_loss_etf)
+        else:
+            source_loss_etf = 0
+            target_loss_etf = 0
+            loss_etf_all = 0
+        
+        loss_total = loss_seg_all + loss_etf_all
+        loss_total.backward()
+        optimizer.step()
+        torch.cuda.empty_cache()
+
+        current_losses = {'source_loss_seg_aux': source_loss_seg_aux,
+                          'source_loss_seg_main': source_loss_seg_main,
+                          'source_loss_dice_aux': source_loss_dice_aux,
+                          'source_loss_dice_main': source_loss_dice_main,
+                          'source_loss_etf': source_loss_etf,
+                          'target_loss_etf': target_loss_etf,
+                          'loss_etf_all': loss_etf_all,
+        }
+
+        # Validation
+        if i_iter % 10 == 0 and i_iter != 0:
+            print_losses(current_losses, i_iter)
+
+            # try:
+            #     _, batch = val_loader_iter.__next__()
+            # except StopIteration:
+            #     val_loader_iter = enumerate(val_loader)
+            #     _, batch = val_loader_iter.__next__()
+            # images_val, labels_val, _ = batch
+
+            # iter_eval_supervised(model, images_val, labels, labels_val, args)
+
+        if i_iter % 100 == 0 and i_iter != 0:
             
+            test_list_pth = args.testfile_path
+
+            with open(test_list_pth) as fp:
+                rows = fp.readlines()
+            testfile_list = [row[:-1] for row in rows]
+
+            dice_mean, dice_std, assd_mean, assd_std = eval_supervised(testfile_list, model, args.test_target)
+            is_best = np.mean(dice_mean) > best_mean_dice
+            best_mean_dice = max(np.mean(dice_mean),best_mean_dice)
+            if is_best:
+                print('Dice:')
+                print('AA :%.1f(%.1f)' % (dice_mean[3], dice_std[3]))
+                print('LAC:%.1f(%.1f)' % (dice_mean[1], dice_std[1]))
+                print('LVC:%.1f(%.1f)' % (dice_mean[2], dice_std[2]))
+                print('Myo:%.1f(%.1f)' % (dice_mean[0], dice_std[0]))
+                print('Mean:%.1f' % np.mean(dice_mean))
+                print('ASSD:')
+                print('AA :%.1f(%.1f)' % (assd_mean[3], assd_std[3]))
+                print('LAC:%.1f(%.1f)' % (assd_mean[1], assd_std[1]))
+                print('LVC:%.1f(%.1f)' % (assd_mean[2], assd_std[2]))
+                print('Myo:%.1f(%.1f)' % (assd_mean[0], assd_std[0]))
+                print('Mean:%.1f' % np.mean(assd_mean))
+                print('taking snapshot ...')
+                print('exp =', args.snapshot_dir)
+                snapshot_dir = Path(args.snapshot_dir)
+                torch.save(model.state_dict(), snapshot_dir / f'model_{i_iter}.pth')
+
+            model.train()
+
+        # Visualize with tensorboard
+        if viz_tensorboard:
+            log_losses_tensorboard(writer, current_losses, i_iter)

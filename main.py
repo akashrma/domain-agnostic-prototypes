@@ -14,7 +14,6 @@ from data_reader import CTDataset, MRDataset, CTDataset_aug, MRDataset_aug
 from model.deeplabv2 import get_deeplab_v2
 
 parser = argparse.ArgumentParser(description="Domain Agnostic Prototype Segmentation.")
-parser.add_argument("--run_mode", choices=['train', 'test'], type=str, help="run main script for training or testing")
 parser.add_argument("--training_mode", choices=['supervised', 'supervised_etf', 'uda_dap'], type=str, help="train supervised mode or unsupervised domain adaptation.")
 parser.add_argument("--train_domain", choices=['MR', 'CT'], type=str)
 parser.add_argument("--tensorboard_log_dir", default='logs', type=str, help="Tensorboard log directory.")
@@ -48,6 +47,8 @@ parser.add_argument("--lambda_dice_main", default=1.0, type=float)
 parser.add_argument("--lambda_dice_aux", default=0.1, type=float)
 parser.add_argument("--etf_loss_weight", default=0.4, type=float)
 parser.add_argument("--pl_mode", choices=["thresholding", "thresh_feat_consistency", "pixel_self_labeling_OT"], type=str)
+parser.add_argument("--target_etf_loss_weight", default=0.4, type=float)
+parser.add_argument("--warmup-iter", default=50, type=int)
 args = parser.parse_args()
 
 def main():

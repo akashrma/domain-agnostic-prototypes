@@ -74,7 +74,7 @@ def dice_loss(pred, target):
     dice_total =  torch.sum(dice) / dice.size(0)  # divide by B -> Batch Size
     return 1 - 1.0 * dice_total/5.0
 
-def fixed_etf_loss(features, downsampled_labels, class_prototypes, args):
+def fixed_etf_loss(features, labels, class_prototypes, reliable_pixel_mask, args):
 
     B, feature_dim, H, W = features.shape
     assert feature_dim == 2048, "Model output's feature dimension should be 2048."
@@ -82,8 +82,20 @@ def fixed_etf_loss(features, downsampled_labels, class_prototypes, args):
     num_classes = args.num_classes
     features = F.normalize(features, p=2, dim=1) # normalize the features (class prototypes are already normalized).
     features_flat = features.permute(0, 2, 3, 1).reshape(-1, feature_dim) # Shape: [B*H*W, num_classes]
-    labels_flat = downsampled_labels.view(-1) # Shape: [B*H*W]
+    labels_flat = labels.view(-1) # Shape: [B*H*W]
 
+    original_pixel_num = len(labels_flat)
+    
+    if reliable_pixel_mask == None:
+        reliable_pixel_mask = torch.ones(B*H*W)
+
+    features_flat = features_flat[reliable_pixel_mask]
+    labels_flat = labels_flat[reliable_pixel_mask]
+
+    reduced_pixel_num = len(labels_flat)
+    
+    print(f'Number of reliable pixels have been reduced by {original_pixel_num - reduced_pixel_num}.')
+    
     class_feature_sums = torch.zeros(num_classes, feature_dim, device=features.device) # Shape: [num_classes, 2048]
     class_pixel_counts = torch.zeros(num_classes, device=features.device) # Shape: [num_classes]
 
