@@ -9,7 +9,7 @@ import numpy as np
 import os.path as osp
 from torch.utils import data
 
-from train import train_supervised, train_supervised_etf
+from train import train_supervised, train_supervised_etf, train_uda_dap
 from data_reader import CTDataset, MRDataset, CTDataset_aug, MRDataset_aug
 from model.deeplabv2 import get_deeplab_v2
 
@@ -46,8 +46,11 @@ parser.add_argument("--lambda_seg_aux", default=0.1, type=float)
 parser.add_argument("--lambda_dice_main", default=1.0, type=float)
 parser.add_argument("--lambda_dice_aux", default=0.1, type=float)
 parser.add_argument("--etf_loss_weight", default=0.4, type=float)
-parser.add_argument("--pl_mode", choices=["thresholding", "thresh_feat_consistency", "pixel_self_labeling_OT"], type=str)
+parser.add_argument("--pl_mode", choices=["naive_thresholding", "adv_thresholding", "thresh_feat_consistency", "pixel_self_labeling_OT"], type=str)
+parser.add_argument("--pixel_sel_thresh", default=0.4, type=int)
 parser.add_argument("--target_etf_loss_weight", default=0.4, type=float)
+parser.add_argument("--source_class_prototypes_init", type=str)
+parser.add_argument("--source_prototype_momentum", default=0.01, type=float)
 parser.add_argument("--warmup-iter", default=50, type=int)
 args = parser.parse_args()
 
@@ -160,46 +163,46 @@ def main():
         if args.train_domain == 'MR':
             source_train_dataset = MRDataset(data_pth=source_train_data, gt_pth=source_train_gt_data,
                                      img_mean=img_mean, transform=transforms)
-            source_val_dataset = MRDataset(data_pth=source_val_data, gt_pth=source_val_gt_data,
-                                   img_mean=img_mean, transform=transforms)
+            # #source_val_dataset = MRDataset(data_pth=source_val_data, gt_pth=source_val_gt_data,
+            #                        img_mean=img_mean, transform=transforms)
             target_train_dataset = CTDataset_aug(data_pth=target_train_data,
                                                 img_mean=img_mean, transform=transforms,
                                                 aug_transform=True)
-            target_val_dataset = CTDataset(data_pth=target_val_data, gt_pth=target_val_gt_data,
-                                          img_mean=img_mean, transform=transforms)
+            # #target_val_dataset = CTDataset(data_pth=target_val_data, gt_pth=target_val_gt_data,
+            #                               img_mean=img_mean, transform=transforms)
         elif args.train_domain == 'CT':
             source_train_dataset = CTDataset(data_pth=source_train_data, gt_pth=source_train_gt_data,
                                      img_mean=img_mean, transform=transforms)
-            source_val_dataset = CTDataset(data_pth=source_val_data, gt_pth=source_val_gt_data,
-                                   img_mean=img_mean, transform=transforms)
+            # #source_val_dataset = CTDataset(data_pth=source_val_data, gt_pth=source_val_gt_data,
+            #                        img_mean=img_mean, transform=transforms)
             target_train_dataset = MRDataset_aug(data_pth=target_train_data,
                                                 img_mean=img_mean, transform=transforms,
                                                 aug_transform=True)
-            target_val_dataset = MRDataset(data_pth=target_val_data, gt_pth=target_val_gt_data,
-                                          img_mean=img_mean, transform=transforms)
+            # #target_val_dataset = MRDataset(data_pth=target_val_data, gt_pth=target_val_gt_data,
+            #                               img_mean=img_mean, transform=transforms)
         source_train_loader = data.DataLoader(source_train_dataset,
                                       batch_size=args.num_workers,
                                       shuffle=True,
                                       pin_memory=True,
                                       worker_init_fn=_init_fn)
-        source_val_loader = data.DataLoader(source_val_dataset,
-                                      batch_size=args.num_workers,
-                                      shuffle=True,
-                                      pin_memory=True,
-                                      worker_init_fn=_init_fn)
+        # #source_val_loader = data.DataLoader(source_val_dataset,
+        #                               batch_size=args.num_workers,
+        #                               shuffle=True,
+        #                               pin_memory=True,
+        #                               worker_init_fn=_init_fn)
         target_train_loader = data.DataLoader(target_train_dataset,
                                       batch_size=args.num_workers,
                                       shuffle=True,
                                       pin_memory=True,
                                       worker_init_fn=_init_fn)
-        target_val_loader = data.DataLoader(target_val_dataset,
-                                      batch_size=args.num_workers,
-                                      shuffle=True,
-                                      pin_memory=True,
-                                      worker_init_fn=_init_fn)
+        # target_val_loader = data.DataLoader(target_val_dataset,
+        #                               batch_size=args.num_workers,
+        #                               shuffle=True,
+        #                               pin_memory=True,
+        #                               worker_init_fn=_init_fn)
         print('Dataloading finished.')
         print(f'Domain Agnostic Prototype Training for {args.train_domain}.')
-        train_uda_dap(model, source_train_loader, source_val_loader, target_train_loader, target_val_loader)
+        train_uda_dap(model, source_train_loader, target_train_loader, args)
 
 if __name__ == '__main__':
     main()

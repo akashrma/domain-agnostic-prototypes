@@ -75,12 +75,19 @@ def dice_loss(pred, target):
     return 1 - 1.0 * dice_total/5.0
 
 def fixed_etf_loss(features, labels, class_prototypes, reliable_pixel_mask, args):
+    '''
+    features: [B, feature_dim, H, W] -> B, 2048, 33, 33
+    labels: [B, H, W] -> B, 33, 33
+    class_prototypes: [feat_dim, num_classes]
+    '''
 
     B, feature_dim, H, W = features.shape
-    assert feature_dim == 2048, "Model output's feature dimension should be 2048."
+    assert feature_dim == 256, "Model output's feature dimension should be 256."
 
     num_classes = args.num_classes
-    features = F.normalize(features, p=2, dim=1) # normalize the features (class prototypes are already normalized).
+    # print(f'Norm value of the first pixel feature before normalization: {torch.norm(features[0,:,0,0], p=2)}.')
+    # features = F.normalize(features, p=2, dim=1)
+    # print(f'Norm value of the first pixel feature after normalization: {torch.norm(features[0,:,0,0], p=2)}.')
     features_flat = features.permute(0, 2, 3, 1).reshape(-1, feature_dim) # Shape: [B*H*W, num_classes]
     labels_flat = labels.view(-1) # Shape: [B*H*W]
 
@@ -88,16 +95,17 @@ def fixed_etf_loss(features, labels, class_prototypes, reliable_pixel_mask, args
     
     if reliable_pixel_mask == None:
         reliable_pixel_mask = torch.ones(B*H*W)
+        reliable_pixel_mask = reliable_pixel_mask.bool()
 
-    features_flat = features_flat[reliable_pixel_mask]
-    labels_flat = labels_flat[reliable_pixel_mask]
-
+    features_flat = features_flat[reliable_pixel_mask] # [p1_2048, p2_2048,...,p4356_2048]
+    labels_flat = labels_flat[reliable_pixel_mask] # [l1, l2,...., l4356] li belongs to {0,1,2,3,4}
+ 
     reduced_pixel_num = len(labels_flat)
     
     print(f'Number of reliable pixels have been reduced by {original_pixel_num - reduced_pixel_num}.')
     
-    class_feature_sums = torch.zeros(num_classes, feature_dim, device=features.device) # Shape: [num_classes, 2048]
-    class_pixel_counts = torch.zeros(num_classes, device=features.device) # Shape: [num_classes]
+    class_feature_sums = torch.zeros(num_classes, feature_dim, device=features.device) # Shape: [num_classes, 2048] 
+    class_pixel_counts = torch.zeros(num_classes, device=features.device) # Shape: [num_classes] [0, 0, 0, 0, 0]
 
     # Compute feature sums and pixel counts
     for cls in range(num_classes):
@@ -111,6 +119,7 @@ def fixed_etf_loss(features, labels, class_prototypes, reliable_pixel_mask, args
         logger.info(f"Class {cls}: Pixel count: {class_pixel_counts[cls].item()}")
 
     class_feature_centers = class_feature_sums / (class_pixel_counts.view(-1, 1) + 1e-6)
+    class_feature_centers = F.normalize(class_feature_centers, p=2, dim=-1)
     logger.info(f"Class feature centers: {class_feature_centers}")
 
     loss_feat_center = 0.0
@@ -124,15 +133,19 @@ def fixed_etf_loss(features, labels, class_prototypes, reliable_pixel_mask, args
         sel_class_prototype = class_prototypes[cls]
 
         dot_prods = torch.einsum('d,kd->k', sel_class_feature_center, class_prototypes)
-        max_dot_prod = dot_prods.max()
-        exp_dot_prods = torch.exp(dot_prods - max_dot_prod) 
-        numr = torch.exp(torch.dot(sel_class_feature_center, sel_class_prototype) - max_dot_prod)
+        # max_dot_prod = dot_prods.max()
+        # exp_dot_prods = torch.exp(dot_prods - max_dot_pro) 
+        exp_dot_prods = torch.exp(dot_prods) 
+        # numr = torch.exp(torch.dot(sel_class_feature_center, sel_class_prototype) - max_dot_pro)
+        numr = torch.exp(torch.dot(sel_class_feature_center, sel_class_prototype))
         denr = exp_dot_prods.sum()
 
         softmax = numr / denr
         loss_feat_center += -torch.log(softmax.clamp(min=1e-12)) # Clamp to avoid log(0)
         logger.info(f"Class {cls}: Fixed ETF Loss contribution: {-torch.log(softmax.clamp(min=1e-12)).item()}")
-
-    logger.info(f"Total Fixed ETF Loss: {loss_feat_center.item()}")
+    if loss_feat_center != 0.0:
+        logger.info(f"Total Fixed ETF Loss: {loss_feat_center.item()}")
+    else:
+        logger.info(f"Total Fixed ETF Loss: {loss_feat_center}")
 
     return (args.etf_loss_weight * loss_feat_center)
