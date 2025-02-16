@@ -84,7 +84,7 @@ def generate_etf_class_prototypes(feature_dim, num_classes):
     M_star = M_star.cuda()
     return M_star
 
-def computer_prf1(true_mask, pred_mask):
+def compute_prf1(true_mask, pred_mask):
     """
     Compute precision, recall, and F1 metrics for predicted mask against ground truth
     """

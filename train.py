@@ -1,4 +1,5 @@
 import os
+import json
 import torch
 import random
 
@@ -22,6 +23,7 @@ from eval import eval_supervised, eval_validation
 from utils import update_class_prototypes, log_losses_tensorboard, print_losses
 from utils import compute_prf1, generate_pseudo_label, label_downsample, to_numpy
 from utils import dice_eval, adjust_learning_rate, loss_calc, generate_etf_class_prototypes
+from utils import compute_pairwise_cosines_std_and_shifted_mean, get_batch_class_centers
 
 
 plt.switch_backend("agg")
@@ -29,18 +31,19 @@ interp_up = nn.Upsample(size=(256, 256), mode='bilinear', align_corners=True)
 
 class PixelLevelFeatureProjector(nn.Module):
     def __init__(self, in_dim=2048, hidden_dim=512, out_dim=256):
-        super([PixelLevelFeatureProjector, self).__init__()
+        super(PixelLevelFeatureProjector, self).__init__()
         self.mlp = nn.Sequential(
             nn.Linear(in_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, out_dim)
+            nn.Linear(hidden_dim, out_dim),
+            nn.ReLU()
         )
         self.initialize_weights()
 
     def initialize_weights(self):
         for layer in self.mlp:
             if isinstance(layer, nn.Linear):
-                nn.init.xavier_uniform(layer.weight)
+                nn.init.xavier_uniform_(layer.weight)
                 nn.init.constant_(layer.bias, 0)
 
     def forward(self, x):
@@ -57,9 +60,11 @@ def train_supervised(model, train_loader, val_loader, args):
     input_size = args.input_size_source
     viz_tensorboard = os.path.exists(args.tensorboard_log_dir)
     writer = SummaryWriter(log_dir=args.tensorboard_log_dir)
+    device = torch.device(args.device)
     
     model.train()
-    model.cuda()
+    model.to(device)
+    # model.cuda()
     cudnn.benchmark = True
     cudnn.enabled = True
 
@@ -89,10 +94,12 @@ def train_supervised(model, train_loader, val_loader, args):
     img_mean = np.array((104.00698793, 116.66876762, 122.67891434), dtype=np.float32)
 
     best_mean_dice = 0
-    std_cosine_feature2048_list = []
-    std_cosine_classifier_list = []
-    iterations = []
 
+    # lists for logging
+    iterations = []
+    std_cosine_feature_center_list = []
+    avg_shifted_cos_feature_center_list = []
+    
     log_file_path = Path(args.snapshot_dir) / "training_logs.json"
     log_data = []
     
@@ -110,7 +117,12 @@ def train_supervised(model, train_loader, val_loader, args):
             _, batch = train_loader_iter.__next__()
         images, labels, _ = batch
 
-        features2k, pred_aux, pred_main = model(images.cuda())
+        # images = images.cuda()
+        # labels = labels.cuda()
+        images = images.to(args.device)
+        labels = labels.to(args.device)
+
+        features, pred_aux, pred_main = model(images)
         
         if args.multi_level_train:
             pred_aux = interp(pred_aux)
@@ -136,29 +148,53 @@ def train_supervised(model, train_loader, val_loader, args):
 
         torch.cuda.empty_cache()
 
-        # Compute variables for analysis
-        
-        
-        # Analysis of Equiangular Property - Compute standard deviation of pairwise cosine similarity
+        if i_iter % 10 == 0 and i_iter != 0:
+            _, feature_dim, feature_H, feature_W = features.size()
+            downsampled_labels = label_downsample(labels.unsqueeze(1), feature_H, feature_W) # B*feature_H*feature_W
+            features_flat = features.permute(0, 2, 3, 1).reshape(-1, feature_dim) # Shape: [B*H*W, feat_dim]
+            downsampled_labels_flat = downsampled_labels.view(-1) # Shape: [B*H*W]
+            class_centers = get_batch_class_centers(features_flat, downsampled_labels_flat, args.num_classes)
+            std_cos_feat_center, avg_shift_cos_feat_center = compute_pairwise_cosines_std_and_shifted_mean(class_centers)
+
+            # Save logs
+            iterations.append(i_iter)
+            std_cosine_feature_center_list.append(std_cos_feat_center)
+            avg_shifted_cos_feature_center_list.append(avg_shift_cos_feat_center)
 
 
-        # Analysis of Maximally Separated Property - Compute mean of shifted pairwise cosine similarity
+            current_losses = {'src_loss_seg_aux': loss_seg_aux,
+                              'src_loss_seg_main': loss_seg_main,
+                              'src_loss_dice_aux': loss_dice_aux,
+                              'src_loss_dice_main': loss_dice_main,
+                              'src_loss_seg_all': loss_seg_all
+            }
 
+            print(f"Iteration {i_iter}: {current_losses}")
 
-        # Feature distribution visualization
+            if viz_tensorboard:
+                writer.add_scalar("StdCosine/FeatureCenters", std_cos_feat_center, i_iter)
+                writer.add_scalar("ShiftedCosine/FeatureCenters", avg_shift_cos_feat_center, i_iter)
+                log_losses_tensorboard(writer, current_losses, i_iter)
 
+            log_entry = {"iteration": i_iter,
+                        "std_cosine_feature_center": std_cos_feat_center,
+                        "avg_shifted_cos_feature_center": avg_shift_cos_feat_center,
+                        "src_loss_seg_aux": loss_seg_aux,
+                        "src_loss_seg_main": loss_seg_main,
+                        'src_loss_dice_aux': loss_dice_aux,
+                        'src_loss_dice_main': loss_dice_main,
+                        'src_loss_seg_all': loss_seg_all}
 
-        # vMF distribution visualization
+            log_data.append(log_entry)
 
-        current_losses = {'src_loss_seg_aux': loss_seg_aux,
-                          'src_loss_seg_main': loss_seg_main,
-                          'src_loss_dice_aux': loss_dice_aux,
-                          'src_loss_dice_main': loss_dice_main, 
-        }
+            with open(log_file_path, "w") as json_file:
+                json.dump(log_data, json_file, indent=4)
 
         # Validation
-        if i_iter % 10 == 0 and i_iter != 0:
-            print_losses(current_losses, i_iter)
+        # if i_iter % 10 == 0 and i_iter != 0:
+            # print_losses(current_losses, i_iter)
+
+            # classifier_weight = model.classifier.weight.data
 
             # dice_mean, _, _, _ = eval_validation(val_loader, model, "cuda", best_mean_dice, i_iter, args, writer)
             # best_mean_dice = max(np.mean(dice_mean), best_mean_dice)            
@@ -202,9 +238,9 @@ def train_supervised(model, train_loader, val_loader, args):
 
             model.train()
 
-        # Visualize with tensorboard
-        if viz_tensorboard:
-            log_losses_tensorboard(writer, current_losses, i_iter)
+            with open(log_file_path, "w") as json_file:
+                json.dump(log_data, json_file, indent=4)
+            
 
 def train_supervised_etf(model, train_loader, val_loader, args):
     '''
@@ -213,14 +249,15 @@ def train_supervised_etf(model, train_loader, val_loader, args):
     input_size = args.input_size_source
     viz_tensorboard = os.path.exists(args.tensorboard_log_dir)
     writer = SummaryWriter(log_dir=args.tensorboard_log_dir)
+    device = torch.device(args.device)
     
     model.train()
-    model.cuda()
+    model.to(device)
     cudnn.benchmark = True
     cudnn.enabled = True
 
-    projector = PixelLevelFeatureProjector(in_dim=2048, out_dim=256).cuda()
-
+    projector = PixelLevelFeatureProjector(in_dim=2048, out_dim=256)
+    projector = projector.to(device)
 
     if args.optimizer == 'Adam':
         optimizer = optim.Adam(model.optim_parameters(args.learning_rate),
@@ -233,11 +270,18 @@ def train_supervised_etf(model, train_loader, val_loader, args):
                                betas=(0.9, 0.999),
                                weight_decay=args.weight_decay)
     else:
-        optimizer = optim.SGD([{'params': model.optim_parameters(args.learning_rate)},
-                                {'params': projector.parameters(), 'lr': args.learning_rate}],
+        optimizer = optim.SGD(model.optim_parameters(args.learning_rate),
                              lr=args.learning_rate,
                              momentum=args.momentum,
                              weight_decay=args.weight_decay)
+
+    optimizer_proj = optim.Adam(projector.parameters(),
+                               lr=args.learning_rate,
+                               betas=(0.9, 0.999),
+                               weight_decay=args.weight_decay)
+
+    # for param in projector.parameters():
+    #     param.requires_grad = False
     
     # interpolate output segmaps
     interp = nn.Upsample(size=(input_size[1], input_size[0]), mode='bilinear', align_corners=True)
@@ -249,12 +293,21 @@ def train_supervised_etf(model, train_loader, val_loader, args):
     img_mean = np.array((104.00698793, 116.66876762, 122.67891434), dtype=np.float32)
     class_prototypes = None
     best_mean_dice = 0
+
+    # lists for logging
+    iterations = []
+    std_cosine_feature_center_list = []
+    avg_shifted_cos_feature_center_list = []
+    
+    log_file_path = Path(args.snapshot_dir) / "training_logs.json"
+    log_data = []
     
     for i_iter in tqdm(range(args.max_iters + 1)):
         
         model.train()
         projector.train()
         optimizer.zero_grad()
+        optimizer_proj.zero_grad()
 
         adjust_learning_rate(optimizer, i_iter, writer, args)
 
@@ -265,8 +318,11 @@ def train_supervised_etf(model, train_loader, val_loader, args):
             _, batch = train_loader_iter.__next__()
         images, labels, _ = batch
 
-        features, pred_aux, pred_main = model(images.cuda())
-        projected_features = projector(features)
+        images = images.to(args.device)
+        labels = labels.to(args.device)
+        
+        features, pred_aux, pred_main = model(images.to())
+        projected_features = projector(features.to(args.device))
         
         if args.multi_level_train:
             pred_aux = interp(pred_aux)
@@ -299,16 +355,52 @@ def train_supervised_etf(model, train_loader, val_loader, args):
 
         torch.cuda.empty_cache()
 
-        current_losses = {'loss_seg_aux': loss_seg_aux,
-                          'loss_seg_main': loss_seg_main,
-                          'loss_dice_aux': loss_dice_aux,
-                          'loss_dice_main': loss_dice_main,
-                          'loss_etf': loss_etf,
-        }
+        if i_iter % 10 == 0 and i_iter != 0:
+            features_flat = features.permute(0, 2, 3, 1).reshape(-1, feature_dim) # Shape: [B*H*W, feat_dim]
+            downsampled_labels_flat = downsampled_labels.view(-1) # Shape: [B*H*W]
+
+            class_centers = get_batch_class_centers(feature_flat, downsampled_labels_flat, args.num_classes)
+            std_cos_feat_center, avg_shift_cos_feat_center = compute_pairwise_cosines_std_and_shifted_mean(class_centers)
+
+            # Save logs
+            iterations.append(i_iter)
+            std_cosine_feature_center_list.append(std_cos_feat_center)
+            avg_shifted_cos_feature_center_list.append(avg_shift_cos_feat_center)
+
+
+            current_losses = {'src_loss_seg_aux': loss_seg_aux,
+                              'src_loss_seg_main': loss_seg_main,
+                              'src_loss_dice_aux': loss_dice_aux,
+                              'src_loss_dice_main': loss_dice_main,
+                              'src_loss_seg_all': loss_seg_all,
+                              'src_loss_etf': loss_etf,
+            }
+
+            print(f"Iteration {i_iter}: {current_losses}")
+
+            if viz_tensorboard:
+                writer.add_scalar("StdCosine/FeatureCenters", std_cos_feat_center, i_iter)
+                writer.add_scalar("ShiftedCosine/FeatureCenters", avg_shift_cos_feat_center, i_iter)
+                log_losses_tensorboard(writer, current_losses, i_iter)
+
+            log_entry = {"iteration": i_iter,
+                        "std_cosine_feature_center": std_cos_feat_center,
+                        "avg_shifted_cos_feature_center": avg_shift_cos_feat_center,
+                        "src_loss_seg_aux": loss_seg_aux,
+                        "src_loss_seg_main": loss_seg_main,
+                        'src_loss_dice_aux': loss_dice_aux,
+                        'src_loss_dice_main': loss_dice_main,
+                        'src_loss_seg_all': loss_seg_all,
+                        'src_loss_etf': loss_etf}
+
+            log_data.append(log_entry)
+
+            with open(log_file_path, "w") as json_file:
+                json.dump(log_data, json_file, indent=4)
 
         # Validation
-        if i_iter % 10 == 0 and i_iter != 0:
-            print_losses(current_losses, i_iter)
+        # if i_iter % 10 == 0 and i_iter != 0:
+        #     print_losses(current_losses, i_iter)
 
             # try:
             #     _, batch = val_loader_iter.__next__()
@@ -350,9 +442,9 @@ def train_supervised_etf(model, train_loader, val_loader, args):
 
             model.train()
 
-        # Visualize with tensorboard
-        if viz_tensorboard:
-            log_losses_tensorboard(writer, current_losses, i_iter)
+            with open(log_file_path, "w") as json_file:
+                json.dump(log_data, json_file, indent=4)
+            
 
 def train_uda_dap(model, source_train_loader, target_train_loader, args):
     '''

@@ -52,6 +52,8 @@ parser.add_argument("--target_etf_loss_weight", default=0.4, type=float)
 parser.add_argument("--source_class_prototypes_init", type=str)
 parser.add_argument("--source_prototype_momentum", default=0.01, type=float)
 parser.add_argument("--warmup-iter", default=50, type=int)
+parser.add_argument("--device", default="cuda:0", type=str, help="Device to run the training on (e.g., cuda:0, cuda:1, cpu)")
+
 args = parser.parse_args()
 
 def main():
@@ -87,6 +89,8 @@ def main():
 
     transforms = None
     img_mean = np.array((104.00698793, 116.66876762, 122.67891434), dtype=np.float32)
+    device = torch.device(args.device)
+    model.to(device)
     model = torch.compile(model)
 
     if args.training_mode == 'supervised':
